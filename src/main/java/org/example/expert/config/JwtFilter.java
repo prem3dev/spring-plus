@@ -10,15 +10,19 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.example.expert.domain.user.enums.UserRole;
 
 import java.io.IOException;
+import org.example.expert.domain.user.service.CustomUserDtailsService;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
 
 @Slf4j
 @RequiredArgsConstructor
 public class JwtFilter implements Filter {
 
     private final JwtUtil jwtUtil;
+    private final CustomUserDtailsService userDtailsService;
 
     @Override
     public void init(FilterConfig filterConfig) throws ServletException {
@@ -32,16 +36,10 @@ public class JwtFilter implements Filter {
 
         String url = httpRequest.getRequestURI();
 
-        if (url.startsWith("/auth")) {
-            chain.doFilter(request, response);
-            return;
-        }
-
         String bearerJwt = httpRequest.getHeader("Authorization");
 
-        if (bearerJwt == null) {
-            // 토큰이 없는 경우 400을 반환합니다.
-            httpResponse.sendError(HttpServletResponse.SC_BAD_REQUEST, "JWT 토큰이 필요합니다.");
+        if (bearerJwt == null || !bearerJwt.startsWith("Bearer ")) {
+            chain.doFilter(request, response);
             return;
         }
 
@@ -54,22 +52,12 @@ public class JwtFilter implements Filter {
                 httpResponse.sendError(HttpServletResponse.SC_BAD_REQUEST, "잘못된 JWT 토큰입니다.");
                 return;
             }
+            Long userId =  Long.parseLong(claims.getSubject());
 
-            UserRole userRole = UserRole.valueOf(claims.get("userRole", String.class));
-
-            httpRequest.setAttribute("userId", Long.parseLong(claims.getSubject()));
-            httpRequest.setAttribute("email", claims.get("email"));
-            httpRequest.setAttribute("userRole", claims.get("userRole"));
-
-            if (url.startsWith("/admin")) {
-                // 관리자 권한이 없는 경우 403을 반환합니다.
-                if (!UserRole.ADMIN.equals(userRole)) {
-                    httpResponse.sendError(HttpServletResponse.SC_FORBIDDEN, "관리자 권한이 없습니다.");
-                    return;
-                }
-                chain.doFilter(request, response);
-                return;
-            }
+            UserDetails userDetails = userDtailsService.loadUserByUserId(userId);
+            UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
+                userDetails, null, userDetails.getAuthorities());
+            SecurityContextHolder.getContext().setAuthentication(auth);
 
             chain.doFilter(request, response);
         } catch (SecurityException | MalformedJwtException e) {
